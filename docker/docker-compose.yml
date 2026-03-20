@@ -1,0 +1,132 @@
+version: "3.9"
+
+services:
+
+  # ── MLflow Tracking Server ──
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.8.0
+    container_name: fraudshield-mlflow
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow_data:/mlflow
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri sqlite:///mlflow/mlflow.db
+      --default-artifact-root /mlflow/artifacts
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - fraudshield-net
+
+  # ── Data Generation + Feature Engineering ──
+  data-pipeline:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.train
+    container_name: fraudshield-data-pipeline
+    command: python scripts/run_pipeline.py
+    volumes:
+      - ./data:/app/data
+    environment:
+      - PYTHONPATH=/app
+    networks:
+      - fraudshield-net
+    profiles: ["pipeline"]   # only runs when explicitly called
+
+  # ── Training ──
+  trainer:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.train
+    container_name: fraudshield-trainer
+    command: python -m training.train
+    volumes:
+      - ../data:/app/data
+      - ../checkpoints:/app/checkpoints
+      - ../configs:/app/configs
+    environment:
+      - PYTHONPATH=/app
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - fraudshield-net
+    profiles: ["training"]
+
+  # ── Inference API ──
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    container_name: fraudshield-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../checkpoints:/app/checkpoints:ro
+      - ../data/processed/artifacts:/app/data/processed/artifacts:ro
+    environment:
+      - MODEL_PATH=/app/checkpoints/best_model.pt
+      - ARTIFACTS_DIR=/app/data/processed/artifacts
+      - THRESHOLD=0.5
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - fraudshield-net
+    restart: unless-stopped
+
+  # ── Streamlit Dashboard ──
+  dashboard:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.api
+    container_name: fraudshield-dashboard
+    command: streamlit run dashboard/app.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    environment:
+      - API_URL=http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - fraudshield-net
+    restart: unless-stopped
+
+  # ── Prometheus (metrics scraping) ──
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: fraudshield-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - fraudshield-net
+    profiles: ["monitoring"]
+
+volumes:
+  mlflow_data:
+  prometheus_data:
+
+networks:
+  fraudshield-net:
+    driver: bridge

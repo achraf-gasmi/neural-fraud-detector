@@ -1,0 +1,97 @@
+# configs/config.yaml
+defaults:
+  - _self_
+
+project:
+  name: fraudshield
+  seed: 42
+  device: cuda  # or cpu
+
+data:
+  n_users: 5000
+  n_merchants: 500
+  n_transactions: 500000
+  fraud_rate: 0.015          # 1.5% fraud — realistic
+  output_dir: data/processed
+  raw_dir: data/raw
+  graph_dir: data/processed/graphs
+
+  # Fraud scenario weights (must sum to 1.0)
+  fraud_scenarios:
+    card_testing: 0.30        # many small rapid txns
+    account_takeover: 0.25    # sudden geo/device shift
+    bust_out: 0.20            # rapid high-value then gone
+    identity_theft: 0.15      # new account, large purchases
+    merchant_collusion: 0.10  # inflated charges
+
+  # Feature engineering
+  time_window_hours: [1, 6, 24, 168]   # rolling windows
+  graph_edge_types:
+    - card_to_merchant
+    - card_to_device
+    - card_to_ip
+    - merchant_to_ip
+
+model:
+  # Tabular Transformer (FT-Transformer)
+  transformer:
+    d_token: 192
+    n_blocks: 3
+    attention_n_heads: 8
+    attention_dropout: 0.2
+    ffn_d_hidden_multiplier: 1.333
+    ffn_dropout: 0.1
+    residual_dropout: 0.0
+
+  # Temporal GNN
+  gnn:
+    hidden_channels: 128
+    num_layers: 3
+    heads: 4               # GAT heads
+    dropout: 0.2
+    time_encoding_dim: 32  # temporal positional encoding
+
+  # Fusion + Heads
+  fusion:
+    hidden_dim: 256
+    dropout: 0.3
+
+  anomaly_head:
+    reconstruction_dim: 128
+    enabled: true
+
+training:
+  epochs: 50
+  batch_size: 2048
+  lr: 1e-3
+  weight_decay: 1e-5
+  warmup_epochs: 5
+
+  # Loss weights
+  focal_loss_gamma: 2.0
+  focal_loss_alpha: 0.25
+  anomaly_loss_weight: 0.3   # auxiliary reconstruction loss weight
+
+  # Class imbalance
+  oversample: false           # use focal loss instead
+
+  # Evaluation
+  eval_metric: auprc          # area under precision-recall curve
+  threshold_sweep: true
+
+  # Checkpointing
+  checkpoint_dir: checkpoints
+  save_top_k: 3
+
+mlflow:
+  tracking_uri: http://localhost:5000
+  experiment_name: fraudshield-v1
+
+api:
+  host: 0.0.0.0
+  port: 8000
+  model_path: checkpoints/best_model.pt
+  threshold: 0.5
+
+dashboard:
+  port: 8501

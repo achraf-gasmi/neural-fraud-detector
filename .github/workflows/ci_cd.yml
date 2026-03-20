@@ -1,0 +1,243 @@
+name: FraudShield CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+
+  # ─────────────────────────────────────────────
+  # 1. Code Quality & Tests
+  # ─────────────────────────────────────────────
+  test:
+    name: Test & Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install CPU-only dependencies
+        run: |
+          pip install torch==2.1.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio httpx ruff mypy
+
+      - name: Lint with ruff
+        run: ruff check . --ignore E501
+
+      - name: Run unit tests
+        run: pytest tests/ -v --tb=short
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: test-results
+          path: tests/reports/
+
+  # ─────────────────────────────────────────────
+  # 2. Data Pipeline Validation
+  # ─────────────────────────────────────────────
+  validate-pipeline:
+    name: Validate Data Pipeline
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install deps
+        run: |
+          pip install torch==2.1.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+
+      - name: Generate small synthetic dataset
+        run: |
+          python -c "
+          from data.generator.synthesizer import generate_dataset
+          generate_dataset(
+              n_users=500,
+              n_merchants=50,
+              n_transactions=5000,
+              fraud_rate=0.015,
+              output_path='data/raw/transactions.parquet',
+          )
+          "
+
+      - name: Run feature engineering pipeline
+        run: |
+          python -c "
+          from data.pipeline.features import run_pipeline
+          train, val, test = run_pipeline(
+              raw_path='data/raw/transactions.parquet',
+              output_dir='data/processed',
+          )
+          print(f'Train: {len(train)}, Val: {len(val)}, Test: {len(test)}')
+          assert len(train) > 0, 'Empty train set'
+          assert 'is_fraud' in train.columns
+          "
+
+      - name: Run data validation checks
+        run: python scripts/validate_data.py
+
+  # ─────────────────────────────────────────────
+  # 3. Model Smoke Test (small training run)
+  # ─────────────────────────────────────────────
+  smoke-test-model:
+    name: Model Smoke Test
+    runs-on: ubuntu-latest
+    needs: validate-pipeline
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install deps
+        run: |
+          pip install torch==2.1.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+
+      - name: Smoke test model forward pass
+        run: pytest tests/test_model.py -v -k "smoke"
+
+      - name: Smoke test training (2 epochs)
+        run: |
+          python scripts/smoke_train.py --epochs 2 --n-samples 1000
+
+  # ─────────────────────────────────────────────
+  # 4. Build & Push Docker Images (main branch only)
+  # ─────────────────────────────────────────────
+  build-api:
+    name: Build API Image
+    runs-on: ubuntu-latest
+    needs: smoke-test-model
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/api
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.api
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-trainer:
+    name: Build Trainer Image
+    runs-on: ubuntu-latest
+    needs: smoke-test-model
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/trainer
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest
+
+      - name: Build and push Trainer image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.train
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ─────────────────────────────────────────────
+  # 5. Deploy (main branch, after images built)
+  # ─────────────────────────────────────────────
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build-api, build-trainer]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            cd /opt/fraudshield
+            git pull origin main
+            docker compose -f docker/docker-compose.yml pull api dashboard
+            docker compose -f docker/docker-compose.yml up -d api dashboard
+            docker system prune -f
+            echo "✅ Deployed FraudShield $(git rev-parse --short HEAD)"
+
+      - name: Notify on success
+        if: success()
+        run: |
+          echo "🚀 Deployment successful — SHA: ${{ github.sha }}"
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "❌ Deployment failed — check logs"

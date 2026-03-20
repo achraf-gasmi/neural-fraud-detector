@@ -1,0 +1,33 @@
+@"
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Data (too large for git)
+data/raw/
+data/processed/
+
+# Model checkpoints
+checkpoints/
+
+# MLflow
+mlflow.db
+mlruns/
+
+# Hydra
+outputs/
+.hydra/
+
+# Env
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+"@ | Out-File -FilePath .gitignore -Encoding utf8

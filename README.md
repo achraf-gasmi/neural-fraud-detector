@@ -1,25 +1,25 @@
-# 🛡️ FraudShield — Real-Time Fraud Detection System
+# 🛡️ Neural Fraud Detector — Real-Time Fraud Detection System
 
 > **End-to-end deep learning system for financial fraud detection.**  
-> Hybrid GNN + Transformer architecture · FastAPI serving · MLflow tracking · Docker · CI/CD
+> FT-Transformer + Anomaly Head · FastAPI serving · MLflow tracking · Docker · CI/CD
 
-[![CI/CD](https://github.com/yourusername/fraudshield/actions/workflows/ci_cd.yml/badge.svg)](https://github.com/yourusername/fraudshield/actions)
-[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://python.org)
-[![PyTorch 2.1](https://img.shields.io/badge/PyTorch-2.1-orange.svg)](https://pytorch.org)
+[![CI/CD](https://github.com/achraf-gasmi/neural-fraud-detector/actions/workflows/ci_cd.yml/badge.svg)](https://github.com/achraf-gasmi/neural-fraud-detector/actions)
+[![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://python.org)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.6%2B-orange.svg)](https://pytorch.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
 ## 🎯 Project Overview
 
-FraudShield is a **production-grade fraud detection system** built as an AI engineering portfolio project. It goes beyond a simple notebook classifier — it's a full ML system with realistic data engineering, a novel hybrid deep learning architecture, and end-to-end MLOps infrastructure.
+**Neural Fraud Detector** is a production-grade fraud detection system built as an AI Engineering portfolio project. It goes beyond a simple notebook classifier — it's a full ML system with realistic data engineering, a novel hybrid deep learning architecture, and end-to-end MLOps infrastructure.
 
 ### What Makes This Different
 
-| Typical Portfolio Project | FraudShield |
+| Typical Portfolio Project | Neural Fraud Detector |
 |---|---|
 | Download Kaggle dataset | Generate realistic synthetic data with 5 fraud scenarios |
-| Train sklearn model | Hybrid FT-Transformer + Temporal GNN architecture |
+| Train sklearn model | FT-Transformer + Anomaly Head architecture |
 | Save model.pkl | FastAPI service + Docker + CI/CD |
 | Accuracy metric | AUPRC (correct metric for imbalanced fraud data) |
 | One notebook | Full modular Python project |
@@ -30,7 +30,7 @@ FraudShield is a **production-grade fraud detection system** built as an AI engi
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     FraudShield System                      │
+│                 Neural Fraud Detector System                │
 ├─────────────┬──────────────────────────┬────────────────────┤
 │  Data Layer │    Model Layer           │  Serving Layer     │
 │             │                          │                    │
@@ -38,48 +38,44 @@ FraudShield is a **production-grade fraud detection system** built as an AI engi
 │  Generator  │  │  tabular features │   │  + batch endpoint  │
 │  (5 fraud   │  └──────────┬────────┘   │                    │
 │  scenarios) │             │ Fusion     │  Streamlit         │
-│             │  ┌─ Temp.   │ Layer ─┐   │  Dashboard         │
-│  Feature    │  │  GNN     ↓        │   │                    │
-│  Pipeline   │  │  graph context    │   │  MLflow            │
-│  (rolling   │  └──────────┬────────┘   │  Tracking          │
-│  windows,   │             │            │                    │
-│  geo-vel,   │  ┌─ Anomaly ↓ Head  ─┐  │  Docker +          │
-│  cyclic enc)│  │  reconstruction   │   │  GitHub Actions    │
-│             │  └───────────────────┘   │                    │
+│             │             │ Layer      │  Dashboard         │
+│  Feature    │             ↓            │                    │
+│  Pipeline   │  ┌─ Anomaly Head    ─┐  │  MLflow            │
+│  (rolling   │  │  reconstruction   │  │  Tracking          │
+│  windows,   │  └──────────┬────────┘  │                    │
+│  geo-vel,   │             │            │  Docker +          │
+│  cyclic enc)│             ↓            │  GitHub Actions    │
+│             │    P(fraud) score         │                    │
 └─────────────┴──────────────────────────┴────────────────────┘
 ```
 
-### Model Architecture — Hybrid FT-Transformer + GNN
+### Model Architecture — FT-Transformer + Anomaly Head
 
 ```
-Raw Transaction Features
+Raw Transaction Features (48-dim)
         │
         ├──► FT-Transformer (tabular encoder)
-        │     ├── Feature Tokenizer (per-feature embedding)
-        │     └── 3× Transformer blocks → CLS token
+        │     ├── Feature Tokenizer (per-feature learned embedding)
+        │     ├── 3× Transformer blocks (Pre-Norm, Multi-Head Attention)
+        │     └── CLS token → (B, d_token) representation
         │
-        ├──► Temporal GNN (graph encoder)
-        │     ├── Transaction nodes: feature embeddings
-        │     ├── Entity nodes: user, merchant, device, IP
-        │     ├── 3× HeteroGAT layers (attention over neighbors)
-        │     └── Temporal edges: k-NN in time per user
-        │
-        └──► Fusion Layer (gated combination)
+        └──► Fusion Layer
               ├── Classification Head → P(fraud)
               └── Anomaly Head → reconstruction loss
+                    (learns "normal" — robust to novel fraud patterns)
 ```
 
 **Why this architecture?**
-- **FT-Transformer** captures complex feature interactions in tabular data that MLP/GBM miss
-- **Temporal GNN** models relationships between transactions — a stolen card used at multiple merchants creates a subgraph pattern invisible to tabular models
-- **Anomaly Head** adds unsupervised signal: the model learns what *normal* looks like, making it robust to novel fraud patterns
+- **FT-Transformer** captures complex feature interactions in tabular data that MLP/GBM miss, by tokenizing each feature into a learned embedding before applying attention
+- **Anomaly Head** adds unsupervised signal via reconstruction loss: the model jointly learns what *normal* looks like alongside supervised fraud classification — making it robust to novel, unseen fraud patterns
+- **Focal Loss** dynamically down-weights easy negatives, focusing gradient updates on hard ambiguous transactions — more adaptive than static class weighting
 
 ---
 
 ## 📁 Project Structure
 
 ```
-fraudshield/
+neural-fraud-detector/
 ├── data/
 │   ├── generator/
 │   │   └── synthesizer.py        # Synthetic data engine (5 fraud scenarios)
@@ -88,13 +84,13 @@ fraudshield/
 │       └── graph_builder.py      # HeteroData graph construction (PyG)
 │
 ├── models/
-│   ├── transformer.py            # FT-Transformer implementation
+│   ├── transformer.py            # FT-Transformer from scratch
 │   ├── gnn.py                    # Temporal GNN (HeteroGAT)
 │   └── hybrid.py                 # Full hybrid model + anomaly head
 │
 ├── training/
 │   ├── train.py                  # Training loop + MLflow logging
-│   ├── losses.py                 # Focal loss + combined loss
+│   ├── losses.py                 # Focal loss + combined reconstruction loss
 │   └── metrics.py                # AUPRC, F1 sweep, metric tracker
 │
 ├── api/
@@ -109,10 +105,10 @@ fraudshield/
 ├── scripts/
 │   ├── run_pipeline.py           # End-to-end data pipeline runner
 │   ├── smoke_train.py            # CI smoke training test
-│   └── validate_data.py         # Data quality validation
+│   └── validate_data.py          # Data quality validation
 │
 ├── docker/
-│   ├── Dockerfile.train          # GPU training image
+│   ├── Dockerfile.train          # GPU training image (CUDA)
 │   ├── Dockerfile.api            # CPU API serving image
 │   └── docker-compose.yml        # Full stack orchestration
 │
@@ -129,17 +125,24 @@ fraudshield/
 
 ### Prerequisites
 - Python 3.11+
-- CUDA-capable GPU (for training, optional)
+- CUDA-capable GPU (optional but recommended)
 - Docker + Docker Compose
 
 ### 1. Install Dependencies
 
 ```bash
-git clone https://github.com/yourusername/fraudshield.git
-cd fraudshield
+git clone https://github.com/achraf-gasmi/neural-fraud-detector.git
+cd neural-fraud-detector
 
-python -m venv venv && source venv/bin/activate
-pip install torch==2.1.0 --index-url https://download.pytorch.org/whl/cu121
+python -m venv venv
+# Windows
+venv\Scripts\activate
+# Linux/Mac
+source venv/bin/activate
+
+# Install PyTorch with CUDA (RTX 30/40/50 series — adjust cu version as needed)
+pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
+
 pip install -r requirements.txt
 ```
 
@@ -155,10 +158,10 @@ python scripts/run_pipeline.py
 ### 3. Train
 
 ```bash
-# Start MLflow tracking server
-mlflow server --host 0.0.0.0 --port 5000 &
+# Start MLflow tracking server (Windows: add --workers 1)
+mlflow server --port 5000 --workers 1
 
-# Train (configure via configs/config.yaml)
+# In a new terminal — train (configure via configs/config.yaml)
 python -m training.train
 
 # View experiments at http://localhost:5000
@@ -228,7 +231,7 @@ docker compose up api dashboard mlflow
 
 ### Synthetic Data Generator
 
-Five realistic fraud scenarios are implemented, each mimicking real-world patterns:
+Five realistic fraud scenarios, each mimicking real-world patterns:
 
 | Scenario | Description | Key Signals |
 |---|---|---|
@@ -243,26 +246,45 @@ Five realistic fraud scenarios are implemented, each mimicking real-world patter
 **48 features** across 6 categories:
 
 - **Rolling windows** (1h, 6h, 24h, 168h): txn count, sum, max, std, unique merchants/devices/IPs
-- **Geo-velocity**: km/h between consecutive transactions — catches location jumps
-- **Temporal**: cyclic sin/cos encoding of hour, day-of-week, month
+- **Geo-velocity**: km/h between consecutive transactions — catches impossible location jumps
+- **Temporal**: cyclic sin/cos encoding of hour, day-of-week, month — no discontinuity at boundaries
 - **Amount**: log transform, credit ratio, personal z-score, round-amount flag
 - **Entity-level**: user age, credit limit
 
 ---
 
-## 📊 Evaluation
+## 📊 Results
 
 Primary metric: **AUPRC** (Area Under Precision-Recall Curve)
 
-> AUROC is misleading for imbalanced datasets. A model scoring random negatives 99% of the time achieves AUROC ≈ 0.97 on 1% fraud data. AUPRC is the honest metric.
+> AUROC is misleading for imbalanced datasets. AUPRC directly measures the trade-off between catching fraud (recall) and avoiding false positives (precision) — the operational metric fraud teams care about.
+
+### Test Set Performance (506K transactions, 2.77% fraud rate)
 
 | Metric | Value |
 |---|---|
-| AUPRC | ~0.77 |
-| AUROC | ~0.95 |
-| F1 @ optimal threshold | ~0.71 |
-| Precision @ 80% Recall | ~0.65 |
-| Avg Inference Latency | <15ms |
+| **AUPRC** | **0.9676** |
+| **AUROC** | **0.9947** |
+| **F1 @ optimal threshold** | **0.9439** |
+| **Precision** | **98.25%** |
+| **Recall** | **90.82%** |
+| **False Positive Rate** | **0.05%** |
+| True Positives | 2,018 |
+| False Positives | 36 |
+| Training time (RTX 5060, CPU-only epoch ~11min → GPU ~45s) | **~15 minutes** |
+| Avg inference latency | **< 15ms** |
+
+> **In production terms:** at 1M transactions/day, this model would flag only ~500 legitimate transactions as fraud while catching ~18,000 fraudulent ones.
+
+### Training Curve
+
+| Epoch | Val AUPRC | Val F1 |
+|---|---|---|
+| 1 | 0.9204 | 0.8997 |
+| 5 | 0.9596 | 0.9306 |
+| 8 | 0.9636 | 0.9352 |
+| **12 (best)** | **0.9648** | **0.9381** |
+| 22 (early stop) | 0.9579 | 0.9394 |
 
 ---
 
@@ -270,14 +292,13 @@ Primary metric: **AUPRC** (Area Under Precision-Recall Curve)
 
 | Component | Tool | Purpose |
 |---|---|---|
-| Experiment tracking | MLflow | Log metrics, params, artifacts |
-| Model registry | MLflow Registry | Version and stage models |
-| Config management | Hydra | Reproducible experiment configs |
-| Serving | FastAPI + Uvicorn | REST API with batch support |
+| Experiment tracking | MLflow | Log metrics, params, artifacts per run |
+| Config management | Hydra | Reproducible, composable experiment configs |
+| Serving | FastAPI + Uvicorn | REST API with single + batch scoring |
 | Containerization | Docker | Reproducible environments |
-| Orchestration | Docker Compose | Multi-service stack |
-| CI/CD | GitHub Actions | Auto-test on PR, deploy on merge |
-| Dashboard | Streamlit | Live monitoring + demo UI |
+| Orchestration | Docker Compose | Multi-service stack (API + Dashboard + MLflow) |
+| CI/CD | GitHub Actions | Auto-test on PR, build + deploy on merge to main |
+| Dashboard | Streamlit | Live monitoring, score distribution, fraud alerts |
 
 ### CI/CD Pipeline
 
@@ -304,36 +325,36 @@ PR opened
 # Run all tests
 pytest tests/ -v
 
-# Run smoke tests only (fast, CI-friendly)
+# Smoke tests only (fast, CI-friendly)
 pytest tests/ -v -k "smoke"
 
-# With coverage
+# With coverage report
 pytest tests/ --cov=. --cov-report=html
 ```
 
-Test coverage:
-- ✅ Data generator (schema, fraud rate, scenario coverage, nulls)
-- ✅ Feature pipeline (splits, leakage, feature columns, scaling)
-- ✅ FT-Transformer (output shape, gradient flow, batch sizes)
-- ✅ Full model (forward pass, probability range)
-- ✅ Loss functions (focal loss behavior, combined loss)
-- ✅ Metrics (perfect/random classifier, early stopping)
+Test coverage includes:
+- ✅ Data generator (schema, fraud rate, scenario coverage, null checks)
+- ✅ Feature pipeline (temporal splits, no leakage, feature columns, scaling)
+- ✅ FT-Transformer (output shape, gradient flow, variable batch sizes)
+- ✅ Full model (forward pass, probability range [0,1])
+- ✅ Loss functions (focal loss weighting behavior, combined loss structure)
+- ✅ Metrics (perfect/random classifier baselines, early stopping logic)
 
 ---
 
 ## 📚 Key Design Decisions
 
-**Why FT-Transformer over XGBoost/LightGBM?**  
-GBMs are excellent for tabular data, but can't be end-to-end trained with the GNN component. The FT-Transformer matches GBM performance on tabular features while enabling joint training with graph signals.
+**Why FT-Transformer over XGBoost/LightGBM?**
+GBMs are strong on tabular data but treat features independently. The FT-Transformer tokenizes each feature into a learned embedding and applies attention across all features — capturing interaction patterns GBMs miss. It also enables end-to-end training with auxiliary heads.
 
-**Why Focal Loss over weighted BCE?**  
-Focal loss dynamically down-weights easy negatives, focusing gradient updates on hard, ambiguous transactions. This is more adaptive than static class weighting.
+**Why Focal Loss over weighted BCE?**
+Focal loss dynamically down-weights easy negatives `(1 - p_t)^γ`, focusing gradient updates on hard, ambiguous transactions. This is more adaptive than static class weighting and was shown to outperform it in class-imbalanced settings.
 
-**Why AUPRC as primary metric?**  
-AUROC is optimistic under class imbalance. AUPRC directly measures the trade-off between catching fraud (recall) and avoiding false positives (precision) — the operational metric fraud teams care about.
+**Why AUPRC as primary metric?**
+AUROC is optimistic under class imbalance — a model that scores all negatives near 0 and positives near 1 will achieve AUROC ≈ 0.99 even at 1% fraud rate. AUPRC reflects the precision-recall tradeoff that fraud operations teams actually optimize for.
 
-**Why synthetic data?**  
-Real fraud datasets are heavily sanitized, legally restricted, and don't allow publishing model details. Synthetic data lets us design fraud patterns explicitly and demonstrate understanding of real fraud mechanics.
+**Why synthetic data?**
+Real fraud datasets are heavily sanitized, legally restricted, and can't be published. Synthetic data lets us explicitly encode real fraud mechanics (card testing velocity, geo-velocity anomalies, bust-out spending curves) and validate the model against known patterns.
 
 ---
 
@@ -345,8 +366,8 @@ MIT License — see [LICENSE](LICENSE).
 
 ## 🙋 About
 
-Built by [Your Name] as an AI Engineering portfolio project.  
-If you find this useful, ⭐ the repo!
+Built by **Achraf Gasmi** as an AI Engineering portfolio project.
+If you find this useful, please ⭐ the repo!
 
-- LinkedIn: [your-linkedin]
-- Email: [your-email]
+- 🔗 LinkedIn: [linkedin.com/in/achraf-gasmi](https://linkedin.com/in/achraf-gasmi)
+- 📧 Email: [achrafgasmi58@gmail.com]

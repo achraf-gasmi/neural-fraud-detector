@@ -1,74 +1,102 @@
-# 🛡️ Neural Fraud Detector — Real-Time Fraud Detection System
+# 🛡️ FraudShield — Real-Time Fraud Detection System
 
-> **End-to-end deep learning system for financial fraud detection.**  
-> FT-Transformer + Anomaly Head · FastAPI serving · MLflow tracking · Docker · CI/CD
+> **A deep-learning fraud detection system: real-time transaction scoring plus offline graph-based fraud-ring detection.**
+> FT-Transformer + Temporal GNN + Anomaly Head · FastAPI serving · MLflow tracking · Docker · CI/CD
 
 [![CI/CD](https://github.com/achraf-gasmi/neural-fraud-detector/actions/workflows/ci_cd.yml/badge.svg)](https://github.com/achraf-gasmi/neural-fraud-detector/actions)
-[![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://python.org)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.6%2B-orange.svg)](https://pytorch.org)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://python.org)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.1%2B-orange.svg)](https://pytorch.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
-## 🎯 Project Overview
+## The Problem
 
-**Neural Fraud Detector** is a production-grade fraud detection system built as an AI Engineering portfolio project. It goes beyond a simple notebook classifier — it's a full ML system with realistic data engineering, a novel hybrid deep learning architecture, and end-to-end MLOps infrastructure.
+Card-fraud detection is a harder ML problem than it looks, for reasons that break naive approaches:
 
-### What Makes This Different
+- **Severe class imbalance.** Real-world fraud rates sit around 0.1–2% of transactions. A model optimized for accuracy can classify everything as legitimate and still be "99% accurate" while catching zero fraud — this is why AUPRC, not accuracy or even AUROC, has to be the metric that drives model selection here.
+- **Every false positive has a cost.** Blocking a legitimate transaction means an angry customer, a support ticket, and sometimes a lost customer. A fraud model that isn't precise enough to run at a usably low false-positive rate doesn't get deployed, no matter how good its recall looks in isolation.
+- **Fraud looks like a single bad transaction, but it's often a ring.** Card testing, account takeover, and merchant collusion frequently share infrastructure — the same stolen-card testing device, the same drop IP, the same colluding merchant — across many "independent-looking" transactions and accounts. A model that scores each transaction in isolation, with no visibility into who/what it's connected to, structurally cannot see this.
+- **Fraud patterns evolve.** Static rules rot as fraud adapts to evade them. A model needs some signal beyond "does this match a known fraud label" — a sense of what *normal* looks like — to have a chance against patterns it wasn't explicitly trained on.
+- **Real-time authorization has a latency budget.** A card-present or card-not-present authorization decision has to return in milliseconds, which rules out anything that requires expensive graph traversal or ensemble lookups at request time.
+- **Disputes and compliance need a reason, not just a score.** When a transaction is declined or a chargeback is disputed, "the model said 0.91" isn't good enough — you need to know *why*.
 
-| Typical Portfolio Project | Neural Fraud Detector |
+FraudShield's architecture is a direct response to these constraints, not a generic classifier bolted onto a fraud dataset.
+
+## How It Addresses Them
+
+Two tiers, each doing the job it's actually good at:
+
+**1. Real-time path — FT-Transformer, scores in isolation, low-latency.**
+Every transaction is scored on its own tabular features (amount, velocity, geo, temporal, entity-level) by an FT-Transformer, trained with focal loss to handle the class imbalance without throwing away the minority signal via naive oversampling. Gradient-based feature attribution is returned with every score so a declined transaction comes with a reason, not just a number. This is the path `api/main.py` serves — it doesn't touch the graph, so it stays fast.
+
+**2. Batch/offline path — the same FT-Transformer fused with a Temporal GNN over the transaction graph.**
+Periodically (not per-request), `training/train_graph.py` trains and `scripts/score_with_graph.py` runs a hybrid model that also sees each transaction's neighborhood: the user, merchant, device, and IP it touched, and other transactions those entities were involved in, via heterogeneous graph attention (GAT). This is where shared-device/shared-IP/shared-merchant fraud rings actually become visible — signal the real-time, single-transaction path structurally cannot have. It costs more to run, so it runs offline/in batch rather than in the authorization path.
+
+**Anomaly head, in both models.** Alongside the classification head, an auxiliary reconstruction head learns to reconstruct *normal* transactions. The reconstruction-error signal doesn't depend on having seen a labeled example of a given fraud pattern before, which is the model's main lever against fraud that doesn't match historical labels.
+
+### What Makes This Different From a Notebook Classifier
+
+| Typical tabular-fraud notebook | FraudShield |
 |---|---|
-| Download Kaggle dataset | Generate realistic synthetic data with 5 fraud scenarios |
-| Train sklearn model | FT-Transformer + Anomaly Head architecture |
-| Save model.pkl | FastAPI service + Docker + CI/CD |
-| Accuracy metric | AUPRC (correct metric for imbalanced fraud data) |
-| One notebook | Full modular Python project |
+| Download a Kaggle dataset | Generate synthetic data with 5 explicit fraud scenarios and realistic entity/velocity structure |
+| Train one sklearn model | FT-Transformer (real-time) + FT-Transformer/GNN hybrid (batch, fraud-ring detection) |
+| `model.pkl` | FastAPI service + Prometheus metrics + Docker + CI/CD |
+| Optimize accuracy | Optimize AUPRC — the metric that actually matches the imbalance |
+| Single-transaction view only | Explicit graph model for shared-device/IP/merchant fraud rings |
 
 ---
 
-## 🏗️ System Architecture
+## System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                 Neural Fraud Detector System                │
-├─────────────┬──────────────────────────┬────────────────────┤
-│  Data Layer │    Model Layer           │  Serving Layer     │
-│             │                          │                    │
-│  Synthetic  │  ┌─ FT-Transformer ─┐   │  FastAPI /score    │
-│  Generator  │  │  tabular features │   │  + batch endpoint  │
-│  (5 fraud   │  └──────────┬────────┘   │                    │
-│  scenarios) │             │ Fusion     │  Streamlit         │
-│             │             │ Layer      │  Dashboard         │
-│  Feature    │             ↓            │                    │
-│  Pipeline   │  ┌─ Anomaly Head    ─┐  │  MLflow            │
-│  (rolling   │  │  reconstruction   │  │  Tracking          │
-│  windows,   │  └──────────┬────────┘  │                    │
-│  geo-vel,   │             │            │  Docker +          │
-│  cyclic enc)│             ↓            │  GitHub Actions    │
-│             │    P(fraud) score         │                    │
-└─────────────┴──────────────────────────┴────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│                          FraudShield System                               │
+├─────────────┬─────────────────────────────┬───────────────────────────────┤
+│  Data Layer │        Model Layer           │        Serving Layer         │
+│             │                               │                             │
+│  Synthetic  │  Real-time (per transaction): │  FastAPI /score             │
+│  Generator  │   FT-Transformer + Anomaly    │  + /score/batch             │
+│  (5 fraud   │   Head → P(fraud), <15ms      │  + /metrics (Prometheus)    │
+│  scenarios) │                               │                             │
+│             │  Batch/offline (periodic):    │  Streamlit Dashboard        │
+│  Feature    │   FT-Transformer + Temporal   │                             │
+│  Pipeline   │   GNN + Anomaly Head over the │  MLflow Tracking            │
+│  + Graph    │   transaction graph → ring    │                             │
+│  Builder    │   detection                   │  Docker + GitHub Actions    │
+└─────────────┴─────────────────────────────┴───────────────────────────────┘
 ```
 
-### Model Architecture — FT-Transformer + Anomaly Head
+### Model — FT-Transformer (+ optional Temporal GNN) + Anomaly Head
 
 ```
-Raw Transaction Features (48-dim)
+Raw Transaction Features (49-dim)
         │
-        ├──► FT-Transformer (tabular encoder)
+        ├──► FT-Transformer (tabular encoder)          [real-time + batch]
         │     ├── Feature Tokenizer (per-feature learned embedding)
         │     ├── 3× Transformer blocks (Pre-Norm, Multi-Head Attention)
         │     └── CLS token → (B, d_token) representation
         │
-        └──► Fusion Layer
+        ├──► Temporal GNN (heterogeneous GAT)           [batch only]
+        │     ├── user / merchant / device / ip entity nodes
+        │     ├── transaction ↔ entity edges + temporal "precedes" edges
+        │     └── sinusoidal time encoding per transaction node
+        │
+        └──► Gated Fusion Layer (real-time: transformer only; batch: both)
               ├── Classification Head → P(fraud)
               └── Anomaly Head → reconstruction loss
                     (learns "normal" — robust to novel fraud patterns)
 ```
 
-**Why this architecture?**
-- **FT-Transformer** captures complex feature interactions in tabular data that MLP/GBM miss, by tokenizing each feature into a learned embedding before applying attention
-- **Anomaly Head** adds unsupervised signal via reconstruction loss: the model jointly learns what *normal* looks like alongside supervised fraud classification — making it robust to novel, unseen fraud patterns
-- **Focal Loss** dynamically down-weights easy negatives, focusing gradient updates on hard ambiguous transactions — more adaptive than static class weighting
+**Why FT-Transformer over XGBoost/LightGBM?** GBMs treat features independently. The FT-Transformer tokenizes each feature into a learned embedding and applies attention across all features, capturing interaction patterns GBMs miss, and it composes naturally with the GNN fusion layer for the batch path.
+
+**Why a GNN at all, if it can't run in the request path?** Because the fraud that matters most — coordinated rings, not one-off card testing — is defined by *shared infrastructure across transactions*, which a single-transaction model cannot represent no matter how good its features are. Running it offline is a real, common production pattern: score fast in the authorization path, then re-score/flag in batch for review, chargebacks, or delayed settlement.
+
+**Why Focal Loss over weighted BCE?** Focal loss dynamically down-weights easy negatives `(1 - p_t)^γ`, focusing gradient updates on hard, ambiguous transactions — more adaptive than static class weighting, and it avoids the duplication/overfitting risk of naive oversampling.
+
+**Why AUPRC as the primary metric?** AUROC is optimistic under class imbalance — a model that scores all negatives near 0 and positives near 1 can hit AUROC ≈ 0.99 even at a 1% fraud rate and still be useless at the precision/recall tradeoff a fraud team actually has to operate at. AUPRC reflects that tradeoff directly.
+
+**Why synthetic data?** Real fraud datasets are heavily sanitized, legally restricted, and rarely include the entity-level (device/IP/merchant) graph structure needed to demonstrate ring detection at all. The synthetic generator explicitly encodes 5 real fraud mechanics (card-testing velocity, geo-velocity anomalies, bust-out spending curves, identity theft, merchant collusion) so the model — and its evaluation — has ground truth to check against.
 
 ---
 
@@ -80,43 +108,47 @@ neural-fraud-detector/
 │   ├── generator/
 │   │   └── synthesizer.py        # Synthetic data engine (5 fraud scenarios)
 │   └── pipeline/
-│       ├── features.py           # Feature engineering (rolling, geo, temporal)
-│       └── graph_builder.py      # HeteroData graph construction (PyG)
+│       ├── features.py           # Feature engineering (rolling, geo, temporal) — 49 features
+│       └── graph_builder.py      # HeteroData graph construction (PyG) for the batch model
 │
 ├── models/
 │   ├── transformer.py            # FT-Transformer from scratch
-│   ├── gnn.py                    # Temporal GNN (HeteroGAT)
-│   └── hybrid.py                 # Full hybrid model + anomaly head
+│   ├── gnn.py                    # Temporal heterogeneous GNN (GAT)
+│   └── hybrid.py                 # Full hybrid model (FT-Transformer + GNN + anomaly head)
 │
 ├── training/
-│   ├── train.py                  # Training loop + MLflow logging
+│   ├── train.py                  # Real-time model training (FT-Transformer only, fast baseline)
+│   ├── train_graph.py            # Batch/hybrid model training (FT-Transformer + GNN)
 │   ├── losses.py                 # Focal loss + combined reconstruction loss
 │   └── metrics.py                # AUPRC, F1 sweep, metric tracker
 │
 ├── api/
-│   └── main.py                   # FastAPI serving (single + batch scoring)
+│   └── main.py                   # FastAPI serving: /score, /score/batch, /metrics, /health
 │
 ├── dashboard/
 │   └── app.py                    # Streamlit monitoring dashboard
 │
 ├── tests/
-│   └── test_all.py               # Unit tests (data, model, losses, metrics)
+│   └── test_all.py               # Unit tests (data, features, both models, losses, metrics)
 │
 ├── scripts/
-│   ├── run_pipeline.py           # End-to-end data pipeline runner
-│   ├── smoke_train.py            # CI smoke training test
+│   ├── run_pipeline.py           # End-to-end: generate data → features → build graphs
+│   ├── smoke_train.py            # CI smoke training test (real-time model)
+│   ├── score_with_graph.py       # Offline batch scoring with the hybrid model
 │   └── validate_data.py          # Data quality validation
 │
 ├── docker/
 │   ├── Dockerfile.train          # GPU training image (CUDA)
 │   ├── Dockerfile.api            # CPU API serving image
-│   └── docker-compose.yml        # Full stack orchestration
+│   ├── docker-compose.yml        # Full stack orchestration
+│   └── prometheus.yml            # Scrape config for the API's /metrics endpoint
 │
 ├── .github/workflows/
 │   └── ci_cd.yml                 # CI (test + lint) → CD (build + deploy)
 │
+├── LICENSE
 └── configs/
-    └── config.yaml               # Hydra config (model, training, data)
+    └── config.yaml                # Hydra config (model, training, data)
 ```
 
 ---
@@ -125,7 +157,7 @@ neural-fraud-detector/
 
 ### Prerequisites
 - Python 3.11+
-- CUDA-capable GPU (optional but recommended)
+- CUDA-capable GPU (optional but recommended for training)
 - Docker + Docker Compose
 
 ### 1. Install Dependencies
@@ -140,19 +172,23 @@ venv\Scripts\activate
 # Linux/Mac
 source venv/bin/activate
 
-# Install PyTorch with CUDA (RTX 30/40/50 series — adjust cu version as needed)
-pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
-
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121   # or the cpu index if you have no GPU
 pip install -r requirements.txt
+
+# Only needed for the hybrid/graph training path (training/train_graph.py) —
+# pyg-lib backs PyG's heterogeneous NeighborLoader. Pick the wheel matching
+# your torch build; see https://data.pyg.org/whl/ for other versions.
+pip install pyg-lib -f https://data.pyg.org/whl/torch-2.1.0+cpu.html
 ```
 
-### 2. Generate Data & Run Pipeline
+### 2. Generate Data, Run the Feature Pipeline, and Build the Graph
 
 ```bash
 python scripts/run_pipeline.py
-# Generates 500K transactions across 5 fraud scenarios
-# Runs feature engineering (rolling windows, geo-velocity, cyclic encoding)
-# Saves train/val/test splits to data/processed/
+# 1. Generates 500K synthetic transactions across 5 fraud scenarios
+# 2. Runs feature engineering (rolling windows, geo-velocity, cyclic encoding) → 49 features
+# 3. Builds the transaction graph (users/merchants/devices/IPs) for the hybrid model
+# Saves train/val/test splits + graphs to data/processed/
 ```
 
 ### 3. Train
@@ -161,19 +197,20 @@ python scripts/run_pipeline.py
 # Start MLflow tracking server (Windows: add --workers 1)
 mlflow server --port 5000 --workers 1
 
-# In a new terminal — train (configure via configs/config.yaml)
+# In a new terminal — fast baseline: FT-Transformer only
 python -m training.train
+
+# Full hybrid model: FT-Transformer + Temporal GNN (needs step 2's graphs + pyg-lib)
+python -m training.train_graph
 
 # View experiments at http://localhost:5000
 ```
 
-### 4. Serve
+### 4. Serve (Real-Time Path)
 
 ```bash
-# Start inference API
 python -m api.main
 
-# Score a transaction
 curl -X POST http://localhost:8000/score \
   -H "Content-Type: application/json" \
   -d '{
@@ -211,18 +248,30 @@ curl -X POST http://localhost:8000/score \
 }
 ```
 
-### 5. Dashboard
+### 5. Score in Batch (Fraud-Ring / Hybrid Path)
+
+```bash
+python scripts/score_with_graph.py \
+  --checkpoint checkpoints/best_hybrid_model.pt \
+  --graph-dir data/processed/graphs \
+  --split test \
+  --output data/processed/graph_scores.csv
+```
+
+### 6. Dashboard
 
 ```bash
 streamlit run dashboard/app.py
 # Open http://localhost:8501
 ```
 
-### 6. Full Stack with Docker
+### 7. Full Stack with Docker
 
 ```bash
 cd docker
 docker compose up api dashboard mlflow
+# optional: metrics scraping
+docker compose --profile monitoring up prometheus
 ```
 
 ---
@@ -243,48 +292,34 @@ Five realistic fraud scenarios, each mimicking real-world patterns:
 
 ### Feature Engineering
 
-**48 features** across 6 categories:
+**49 features** across 6 categories:
 
 - **Rolling windows** (1h, 6h, 24h, 168h): txn count, sum, max, std, unique merchants/devices/IPs
 - **Geo-velocity**: km/h between consecutive transactions — catches impossible location jumps
 - **Temporal**: cyclic sin/cos encoding of hour, day-of-week, month — no discontinuity at boundaries
 - **Amount**: log transform, credit ratio, personal z-score, round-amount flag
 - **Entity-level**: user age, credit limit
+- **Categorical**: merchant category, merchant country
+
+### Graph Construction (Batch Path)
+
+`data/pipeline/graph_builder.py` builds a heterogeneous graph per split: `transaction` nodes (the 49 features above) connected to `user`, `merchant`, `device`, and `ip` entity nodes, plus `precedes` edges linking each user's transactions in temporal order. `training/train_graph.py` trains the hybrid model over this graph using mini-batch neighborhood sampling (PyG `NeighborLoader`), so training scales past what fits in memory as a single batch.
 
 ---
 
-## 📊 Results
+## 📊 Evaluation
 
-Primary metric: **AUPRC** (Area Under Precision-Recall Curve)
+Primary metric: **AUPRC** (Area Under Precision-Recall Curve) — see [The Problem](#the-problem) for why accuracy/AUROC alone are misleading here. `training/metrics.py` also reports AUROC, F1 at the optimal threshold, precision, recall, and false-positive rate, and `training/train.py` / `training/train_graph.py` log all of these to MLflow every epoch.
 
-> AUROC is misleading for imbalanced datasets. AUPRC directly measures the trade-off between catching fraud (recall) and avoiding false positives (precision) — the operational metric fraud teams care about.
+This repo doesn't ship pre-baked benchmark numbers — a number without the run that produced it isn't verifiable, and the honest state is: run it yourself and see what you get. To reproduce:
 
-### Test Set Performance (506K transactions, 2.77% fraud rate)
+```bash
+python scripts/run_pipeline.py        # generates data + features + graphs
+python -m training.train              # real-time model — check MLflow at localhost:5000
+python -m training.train_graph        # hybrid model — logged to a separate MLflow experiment
+```
 
-| Metric | Value |
-|---|---|
-| **AUPRC** | **0.9676** |
-| **AUROC** | **0.9947** |
-| **F1 @ optimal threshold** | **0.9439** |
-| **Precision** | **98.25%** |
-| **Recall** | **90.82%** |
-| **False Positive Rate** | **0.05%** |
-| True Positives | 2,018 |
-| False Positives | 36 |
-| Training time (RTX 5060, CPU-only epoch ~11min → GPU ~45s) | **~15 minutes** |
-| Avg inference latency | **< 15ms** |
-
-> **In production terms:** at 1M transactions/day, this model would flag only ~500 legitimate transactions as fraud while catching ~18,000 fraudulent ones.
-
-### Training Curve
-
-| Epoch | Val AUPRC | Val F1 |
-|---|---|---|
-| 1 | 0.9204 | 0.8997 |
-| 5 | 0.9596 | 0.9306 |
-| 8 | 0.9636 | 0.9352 |
-| **12 (best)** | **0.9648** | **0.9381** |
-| 22 (early stop) | 0.9579 | 0.9394 |
+Both scripts save the best checkpoint (by validation AUPRC) to `checkpoints/`, plus a per-epoch metric history CSV, so a full run is fully auditable after the fact.
 
 ---
 
@@ -292,11 +327,12 @@ Primary metric: **AUPRC** (Area Under Precision-Recall Curve)
 
 | Component | Tool | Purpose |
 |---|---|---|
-| Experiment tracking | MLflow | Log metrics, params, artifacts per run |
+| Experiment tracking | MLflow | Log metrics, params, artifacts per run (separate experiments for the real-time and hybrid models) |
 | Config management | Hydra | Reproducible, composable experiment configs |
 | Serving | FastAPI + Uvicorn | REST API with single + batch scoring |
+| Metrics | Prometheus | `/metrics` endpoint on the API (request counts, latency histogram, fraud-flagged counter) |
 | Containerization | Docker | Reproducible environments |
-| Orchestration | Docker Compose | Multi-service stack (API + Dashboard + MLflow) |
+| Orchestration | Docker Compose | Multi-service stack (API + Dashboard + MLflow + optional Prometheus) |
 | CI/CD | GitHub Actions | Auto-test on PR, build + deploy on merge to main |
 | Dashboard | Streamlit | Live monitoring, score distribution, fraud alerts |
 
@@ -306,9 +342,9 @@ Primary metric: **AUPRC** (Area Under Precision-Recall Curve)
 PR opened
     │
     ├── Lint (ruff)
-    ├── Unit tests (pytest)
+    ├── Unit tests (pytest) — covers both the real-time and hybrid model paths
     ├── Data pipeline validation
-    └── Model smoke test (2 epochs)
+    └── Model smoke test (2 epochs, real-time model)
             │
     Merge to main
             │
@@ -336,25 +372,10 @@ Test coverage includes:
 - ✅ Data generator (schema, fraud rate, scenario coverage, null checks)
 - ✅ Feature pipeline (temporal splits, no leakage, feature columns, scaling)
 - ✅ FT-Transformer (output shape, gradient flow, variable batch sizes)
-- ✅ Full model (forward pass, probability range [0,1])
+- ✅ Real-time model — `TabularFraudDetector` (forward pass, probability range)
+- ✅ Hybrid model — `FraudDetector` over a real graph (forward pass, probability range, entity-embedding indexing regression test)
 - ✅ Loss functions (focal loss weighting behavior, combined loss structure)
 - ✅ Metrics (perfect/random classifier baselines, early stopping logic)
-
----
-
-## 📚 Key Design Decisions
-
-**Why FT-Transformer over XGBoost/LightGBM?**
-GBMs are strong on tabular data but treat features independently. The FT-Transformer tokenizes each feature into a learned embedding and applies attention across all features — capturing interaction patterns GBMs miss. It also enables end-to-end training with auxiliary heads.
-
-**Why Focal Loss over weighted BCE?**
-Focal loss dynamically down-weights easy negatives `(1 - p_t)^γ`, focusing gradient updates on hard, ambiguous transactions. This is more adaptive than static class weighting and was shown to outperform it in class-imbalanced settings.
-
-**Why AUPRC as primary metric?**
-AUROC is optimistic under class imbalance — a model that scores all negatives near 0 and positives near 1 will achieve AUROC ≈ 0.99 even at 1% fraud rate. AUPRC reflects the precision-recall tradeoff that fraud operations teams actually optimize for.
-
-**Why synthetic data?**
-Real fraud datasets are heavily sanitized, legally restricted, and can't be published. Synthetic data lets us explicitly encode real fraud mechanics (card testing velocity, geo-velocity anomalies, bust-out spending curves) and validate the model against known patterns.
 
 ---
 
@@ -362,12 +383,6 @@ Real fraud datasets are heavily sanitized, legally restricted, and can't be publ
 
 MIT License — see [LICENSE](LICENSE).
 
----
+## Contact
 
-## 🙋 About
-
-Built by **Achraf Gasmi** as an AI Engineering portfolio project.
-If you find this useful, please ⭐ the repo!
-
-- 🔗 LinkedIn: [linkedin.com/in/achraf-gasmi](https://linkedin.com/in/achraf-gasmi)
-- 📧 Email: [achrafgasmi58@gmail.com]
+Achraf Gasmi — [achrafgasmi58@gmail.com](mailto:achrafgasmi58@gmail.com) · [linkedin.com/in/achraf-gasmi](https://linkedin.com/in/achraf-gasmi)

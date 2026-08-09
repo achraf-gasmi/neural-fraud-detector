@@ -17,7 +17,9 @@ import torch
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from loguru import logger
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 from pydantic import BaseModel, Field
 
 from data.pipeline.features import FEATURE_COLUMNS, add_temporal_features, add_amount_features
@@ -111,6 +113,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ─────────────────────────────────────────────
+# Prometheus Metrics
+# ─────────────────────────────────────────────
+
+SCORE_REQUESTS = Counter("fraudshield_score_requests_total", "Total scoring requests", ["endpoint"])
+FRAUD_FLAGGED = Counter("fraudshield_fraud_flagged_total", "Transactions flagged as fraud")
+SCORE_LATENCY = Histogram("fraudshield_score_latency_seconds", "Scoring latency in seconds", ["endpoint"])
 
 
 # ─────────────────────────────────────────────
@@ -269,6 +279,12 @@ def get_top_risk_factors(features: np.ndarray, n: int = 5) -> list[dict]:
 # Endpoints
 # ─────────────────────────────────────────────
 
+@app.get("/metrics")
+async def metrics():
+    """Prometheus scrape endpoint."""
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health():
     avg_lat = state.total_latency_ms / max(state.request_count, 1)
@@ -302,6 +318,11 @@ async def score_transaction(req: TransactionRequest):
     state.request_count += 1
     state.total_latency_ms += latency_ms
 
+    SCORE_REQUESTS.labels(endpoint="score").inc()
+    SCORE_LATENCY.labels(endpoint="score").observe(latency_ms / 1000)
+    if prob >= state.threshold:
+        FRAUD_FLAGGED.inc()
+
     return FraudScoreResponse(
         txn_id=req.txn_id,
         fraud_probability=round(prob, 4),
@@ -331,6 +352,10 @@ async def score_batch(transactions: list[TransactionRequest]):
         probs = out["probs"].cpu().numpy()
 
     latency_ms = (time.perf_counter() - t0) * 1000
+
+    SCORE_REQUESTS.labels(endpoint="score_batch").inc(len(transactions))
+    SCORE_LATENCY.labels(endpoint="score_batch").observe(latency_ms / 1000)
+    FRAUD_FLAGGED.inc(int((probs >= state.threshold).sum()))
 
     return {
         "results": [

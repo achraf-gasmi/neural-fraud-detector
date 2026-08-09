@@ -75,6 +75,10 @@ training:
   # Class imbalance
   oversample: false           # use focal loss instead
 
+  # Graph training (training/train_graph.py) — neighbors sampled per hop,
+  # one entry per GNN layer (model.gnn.num_layers)
+  graph_neighbors_per_hop: [15, 10, 5]
+
   # Evaluation
   eval_metric: auprc          # area under precision-recall curve
   threshold_sweep: true

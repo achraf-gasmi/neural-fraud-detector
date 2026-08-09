@@ -2,6 +2,10 @@
 torch>=2.1.0
 torch-geometric>=2.4.0
 torchmetrics>=1.2.0
+# pyg-lib backs PyG's heterogeneous NeighborLoader (used by training/train_graph.py).
+# Install separately with the wheel matching your torch build, e.g.:
+#   pip install pyg-lib -f https://data.pyg.org/whl/torch-2.8.0+cpu.html
+# (see https://data.pyg.org/whl/ for other torch/cuda versions)
 
 # Data
 numpy>=1.24.0
@@ -22,6 +26,7 @@ great-expectations>=0.17.0
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 pydantic>=2.4.0
+prometheus-client>=0.19.0
 
 # Explainability
 shap>=0.43.0

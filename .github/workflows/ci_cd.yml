@@ -118,7 +118,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Smoke test model forward pass
-        run: pytest tests/test_model.py -v -k "smoke"
+        run: pytest tests/test_all.py -v -k "smoke"
 
       - name: Smoke test training (2 epochs)
         run: |

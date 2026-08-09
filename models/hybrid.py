@@ -48,13 +48,20 @@ class AnomalyHead(nn.Module):
 
 
 class FusionLayer(nn.Module):
-    """Fuses Transformer and GNN embeddings via gated mechanism."""
+    """
+    Fuses Transformer and GNN embeddings.
+
+    Each modality is gated (scaled by a learned, per-sample weight in [0, 1])
+    before concatenation, so the model can learn to lean on the tabular
+    signal or the graph-neighborhood signal depending on the transaction —
+    e.g. a brand-new user has little graph history, so the gate should learn
+    to downweight the GNN branch for them.
+    """
 
     def __init__(self, transformer_dim: int, gnn_dim: int, hidden_dim: int, dropout: float):
         super().__init__()
         combined_dim = transformer_dim + gnn_dim
 
-        # Gating: learns how much to trust each modality per sample
         self.gate = nn.Sequential(
             nn.Linear(combined_dim, 2),
             nn.Softmax(dim=-1),
@@ -79,11 +86,12 @@ class FusionLayer(nn.Module):
         combined = torch.cat([transformer_emb, gnn_emb], dim=-1)  # (B, combined)
         gates = self.gate(combined)  # (B, 2)
 
-        # Weighted combination before projection
-        weighted = (gates[:, 0:1] * transformer_emb +
-                    gates[:, 1:2] * gnn_emb[:, :transformer_emb.shape[-1]])  # align dims
-        # Just use full concat for actual fusion
-        return self.fusion(combined)
+        gated = torch.cat([
+            gates[:, 0:1] * transformer_emb,
+            gates[:, 1:2] * gnn_emb,
+        ], dim=-1)  # (B, combined)
+
+        return self.fusion(gated)
 
 
 class FraudDetector(nn.Module):
@@ -187,17 +195,21 @@ class FraudDetector(nn.Module):
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        graph: HeteroData,
-        timestamps: torch.Tensor,
-    ) -> dict:
+    def forward(self, graph: HeteroData) -> dict:
         """
         Args:
-            x: (B, n_features) tabular features
-            graph: HeteroData graph (batch)
-            timestamps: (B,) normalized timestamps [0, 1]
+            graph: HeteroData batch of transaction nodes plus their sampled
+                neighborhood (as produced by graph_builder.py for the full
+                graph, or by a PyG NeighborLoader for mini-batches). The
+                "transaction" node store must carry `.x` (features) and
+                `.time_norm` (normalized timestamp) for every node in the
+                subgraph, not just the seed transactions being scored.
+
+        Seed transactions — the ones this batch is actually scoring — are
+        the first `batch_size` rows of graph["transaction"].x. NeighborLoader
+        guarantees this ordering for its `input_nodes`; graph_builder.py's
+        full, unsampled graph has no separate neighborhood so every node is
+        its own seed.
 
         Returns:
             dict with keys:
@@ -206,11 +218,17 @@ class FraudDetector(nn.Module):
               - reconstruction: (B, n_features) if anomaly head enabled
               - fused:        (B, hidden_dim) fused representation
         """
-        # Tabular path
-        transformer_emb = self.transformer(x)                   # (B, d_token)
+        txn_store = graph["transaction"]
+        batch_size = getattr(txn_store, "batch_size", txn_store.x.size(0))
+        x_seed = txn_store.x[:batch_size]                       # (B, n_features)
 
-        # Graph path
-        gnn_emb = self.gnn(graph, timestamps)                   # (B, gnn_out)
+        # Tabular path — only the seed transactions being scored
+        transformer_emb = self.transformer(x_seed)              # (B, d_token)
+
+        # Graph path — runs over the full sampled subgraph, then we keep
+        # only the embeddings for the seed transactions
+        gnn_emb_all = self.gnn(graph, txn_store.time_norm)       # (n_txns_in_subgraph, gnn_out)
+        gnn_emb = gnn_emb_all[:batch_size]                       # (B, gnn_out)
 
         # Fusion
         fused = self.fusion(transformer_emb, gnn_emb)           # (B, hidden_dim)
@@ -227,7 +245,7 @@ class FraudDetector(nn.Module):
             "gnn_emb": gnn_emb,
         }
 
-        # Anomaly reconstruction
+        # Anomaly reconstruction — target is the seed transactions' own features
         if self.use_anomaly_head:
             reconstruction = self.anomaly_head(fused)           # (B, n_features)
             out["reconstruction"] = reconstruction
@@ -235,10 +253,10 @@ class FraudDetector(nn.Module):
         return out
 
     @torch.no_grad()
-    def predict(self, x: torch.Tensor, graph: HeteroData, timestamps: torch.Tensor) -> torch.Tensor:
-        """Inference-only: returns fraud probabilities."""
+    def predict(self, graph: HeteroData) -> torch.Tensor:
+        """Inference-only: returns fraud probabilities for the seed transactions."""
         self.eval()
-        return self.forward(x, graph, timestamps)["probs"]
+        return self.forward(graph)["probs"]
 
     def count_parameters(self) -> int:
         return sum(p.numel() for p in self.parameters() if p.requires_grad)

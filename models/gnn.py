@@ -119,11 +119,27 @@ class TemporalGNN(nn.Module):
 
         self.dropout = nn.Dropout(dropout)
 
+    @staticmethod
+    def _entity_ids(store, device: torch.device) -> torch.Tensor:
+        """
+        Global entity IDs for embedding lookup.
+
+        A NeighborLoader-sampled subgraph re-indexes nodes locally (0..k-1),
+        so local position no longer matches the entity's row in the global
+        embedding table. PyG preserves the original global index in `n_id`
+        for sampled subgraphs; the full (unsampled) graph built by
+        graph_builder.py has no `n_id`, so fall back to arange there.
+        """
+        if hasattr(store, "n_id"):
+            return store.n_id.to(device)
+        return torch.arange(store.num_nodes, device=device)
+
     def forward(self, data: HeteroData, timestamps: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            data: HeteroData graph batch
-            timestamps: (n_txns,) normalized timestamps [0, 1]
+            data: HeteroData graph batch (full graph or NeighborLoader sample)
+            timestamps: (n_txns,) normalized timestamps [0, 1], aligned to
+                every "transaction" node present in `data`
         Returns:
             txn_embeddings: (n_txns, out_channels)
         """
@@ -134,11 +150,10 @@ class TemporalGNN(nn.Module):
 
         x_dict = {
             "transaction": txn_h,
-            "user":        self.user_emb(data["user"].num_nodes if isinstance(data["user"].num_nodes, torch.Tensor)
-                                         else torch.arange(data["user"].num_nodes, device=txn_h.device)),
-            "merchant":    self.merchant_emb(torch.arange(data["merchant"].num_nodes, device=txn_h.device)),
-            "device":      self.device_emb(torch.arange(data["device"].num_nodes, device=txn_h.device)),
-            "ip":          self.ip_emb(torch.arange(data["ip"].num_nodes, device=txn_h.device)),
+            "user":        self.user_emb(self._entity_ids(data["user"], txn_h.device)),
+            "merchant":    self.merchant_emb(self._entity_ids(data["merchant"], txn_h.device)),
+            "device":      self.device_emb(self._entity_ids(data["device"], txn_h.device)),
+            "ip":          self.ip_emb(self._entity_ids(data["ip"], txn_h.device)),
         }
 
         # ── Message passing ──

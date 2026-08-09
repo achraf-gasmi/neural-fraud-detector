@@ -208,6 +208,68 @@ class TestTabularFraudDetector:
 
 
 # ─────────────────────────────────────────────
+# Hybrid Model (FT-Transformer + GNN) Tests
+# ─────────────────────────────────────────────
+
+class TestHybridModel:
+
+    @pytest.fixture
+    def graph_and_model(self, processed_splits):
+        from data.pipeline.graph_builder import build_id_maps, build_transaction_graph
+        from models.hybrid import FraudDetector
+
+        train_df, val_df, test_df = processed_splits
+        full_df = pd.concat([train_df, val_df, test_df])
+        id_maps = build_id_maps(full_df)
+        graph = build_transaction_graph(train_df, id_maps)
+
+        n_features = graph["transaction"].x.shape[1]
+        entity_counts = {k: len(v) for k, v in id_maps.items()}
+        model = FraudDetector(
+            n_features=n_features,
+            transformer_d_token=16, transformer_n_blocks=1, transformer_n_heads=2,
+            gnn_hidden_channels=8, gnn_num_layers=1, gnn_heads=2, gnn_time_encoding_dim=8,
+            n_users=entity_counts["user"], n_merchants=entity_counts["merchant"],
+            n_devices=entity_counts["device"], n_ips=entity_counts["ip"],
+            fusion_hidden_dim=16, anomaly_hidden_dim=16,
+        )
+        return graph, model
+
+    def test_forward_shape(self, graph_and_model):
+        graph, model = graph_and_model
+        n_txns = graph["transaction"].x.shape[0]
+        out = model(graph)
+        assert out["logits"].shape == (n_txns, 1)
+        assert out["probs"].shape == (n_txns,)
+        assert out["reconstruction"].shape == graph["transaction"].x.shape
+
+    def test_probs_in_range(self, graph_and_model):
+        graph, model = graph_and_model
+        out = model(graph)
+        probs = out["probs"].detach()
+        assert (probs >= 0).all() and (probs <= 1).all()
+
+    def test_entity_embeddings_use_global_ids(self, graph_and_model):
+        """
+        Regression test: entity node embeddings must be looked up by global
+        entity ID, not by local position in the (possibly sampled) subgraph.
+        On the full, unsampled graph these coincide, so instead this checks
+        the fallback path directly.
+        """
+        from models.gnn import TemporalGNN
+        n_users = graph_and_model[0]["user"].num_nodes
+        ids = TemporalGNN._entity_ids(graph_and_model[0]["user"], torch.device("cpu"))
+        assert ids.shape[0] == n_users
+        assert ids.max().item() == n_users - 1
+
+    @pytest.mark.smoke
+    def test_smoke_forward_pass(self, graph_and_model):
+        graph, model = graph_and_model
+        out = model(graph)
+        assert out["probs"].shape[0] == graph["transaction"].x.shape[0]
+
+
+# ─────────────────────────────────────────────
 # Loss Function Tests
 # ─────────────────────────────────────────────
 

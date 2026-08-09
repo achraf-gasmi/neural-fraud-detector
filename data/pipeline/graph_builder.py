@@ -71,11 +71,22 @@ def build_transaction_graph(
     data = HeteroData()
 
     # ── Transaction node features ──
+    # NOTE: txn_id is intentionally NOT stored on the HeteroData node store.
+    # PyG's NeighborLoader index_selects every attribute whose first dimension
+    # matches num_nodes (to slice it into each sampled subgraph); a plain
+    # Python list of strings breaks that. Row order here always matches `df`,
+    # so txn_id is saved separately (see save_graph) and re-joined by position.
     X = torch.tensor(df[feature_cols].fillna(0).values, dtype=torch.float32)
     y = torch.tensor(df["is_fraud"].values, dtype=torch.long)
     data["transaction"].x = X
     data["transaction"].y = y
-    data["transaction"].txn_id = list(df["txn_id"])
+
+    # Normalized timestamp [0, 1] for the TemporalGNN's positional encoding.
+    # Uses this dataframe's own range (train/val/test each build independently,
+    # matching how features.py fits per-split scaling downstream of a global sort).
+    ts = df["timestamp"].astype("int64")
+    ts_norm = (ts - ts.min()) / (ts.max() - ts.min() + 1e-8)
+    data["transaction"].time_norm = torch.tensor(ts_norm.values, dtype=torch.float32)
 
     # ── Entity node features (simple embeddings — trainable) ──
     n_users = len(id_maps["user"])
@@ -158,7 +169,10 @@ def save_graph(data: HeteroData, path: str):
 
 
 def load_graph(path: str) -> HeteroData:
-    return torch.load(path)
+    # weights_only=False: PyTorch 2.6+ defaults to True, which rejects the
+    # HeteroData class itself. Safe here since these are graphs we generated
+    # ourselves (scripts/run_pipeline.py), not third-party checkpoints.
+    return torch.load(path, weights_only=False)
 
 
 # ─────────────────────────────────────────────
@@ -188,6 +202,11 @@ def build_all_graphs(
         logger.info(f"Building {split} graph...")
         graph = build_transaction_graph(df, id_maps)
         save_graph(graph, f"{graph_dir}/{split}_graph.pt")
+
+        # txn_id kept out of the HeteroData itself (see build_transaction_graph);
+        # row order matches the graph's "transaction" node order (df is untouched here).
+        with open(f"{graph_dir}/{split}_txn_ids.pkl", "wb") as f:
+            pickle.dump(df["txn_id"].tolist(), f)
 
     logger.success("All graphs saved.")
 

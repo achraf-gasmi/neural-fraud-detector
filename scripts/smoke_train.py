@@ -21,7 +21,8 @@ from loguru import logger
 
 from data.generator.synthesizer import generate_dataset
 from data.pipeline.features import run_pipeline, FEATURE_COLUMNS
-from training.train import TabularFraudDetector, TransactionDataset, get_weighted_sampler
+from models.tabular import TabularFraudDetector
+from training.train import TransactionDataset, get_weighted_sampler
 from training.losses import CombinedFraudLoss
 from training.metrics import compute_all_metrics
 

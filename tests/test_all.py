@@ -165,7 +165,7 @@ class TestTabularFraudDetector:
     @pytest.fixture
     def model_and_features(self, sample_features):
         from omegaconf import OmegaConf
-        from training.train import TabularFraudDetector
+        from models.tabular import TabularFraudDetector
 
         cfg = OmegaConf.create({
             "model": {

@@ -23,7 +23,7 @@ from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_
 from pydantic import BaseModel, Field
 
 from data.pipeline.features import FEATURE_COLUMNS, add_temporal_features, add_amount_features
-from training.train import TabularFraudDetector
+from models.tabular import TabularFraudDetector
 
 
 # ─────────────────────────────────────────────

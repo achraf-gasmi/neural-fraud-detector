@@ -1,10 +1,8 @@
-version: "3.9"
-
 services:
 
   # ── MLflow Tracking Server ──
   mlflow:
-    image: ghcr.io/mlflow/mlflow:v2.8.0
+    image: ghcr.io/mlflow/mlflow:v3.15.1
     container_name: fraudshield-mlflow
     ports:
       - "5000:5000"
@@ -17,7 +15,8 @@ services:
       --backend-store-uri sqlite:///mlflow/mlflow.db
       --default-artifact-root /mlflow/artifacts
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      # The mlflow image has no curl/wget, only python.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
       interval: 30s
       timeout: 10s
       retries: 3

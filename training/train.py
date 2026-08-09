@@ -23,7 +23,7 @@ from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 from tqdm import tqdm
 
 from data.pipeline.features import FEATURE_COLUMNS
-from models.hybrid import FraudDetector
+from models.tabular import TabularFraudDetector
 from training.losses import CombinedFraudLoss
 from training.metrics import compute_all_metrics, print_metrics, MetricTracker
 
@@ -68,60 +68,6 @@ def get_weighted_sampler(labels: torch.Tensor) -> WeightedRandomSampler:
     weights = 1.0 / class_counts.float()
     sample_weights = weights[labels]
     return WeightedRandomSampler(sample_weights, num_samples=len(sample_weights), replacement=True)
-
-
-# ─────────────────────────────────────────────
-# Tabular-Only Training Step
-# (GNN path requires graph batching — see notebooks/gnn_training.ipynb)
-# ─────────────────────────────────────────────
-
-class TabularFraudDetector(nn.Module):
-    """
-    Tabular-only version for fast training without graph infrastructure.
-    Uses only FT-Transformer + classification head.
-    Swap for FraudDetector (full model) when graph batching is set up.
-    """
-
-    def __init__(self, n_features: int, cfg: DictConfig):
-        super().__init__()
-        from models.transformer import FTTransformer
-        tc = cfg.model.transformer
-
-        self.transformer = FTTransformer(
-            n_features=n_features,
-            d_token=tc.d_token,
-            n_blocks=tc.n_blocks,
-            attention_n_heads=tc.attention_n_heads,
-            attention_dropout=tc.attention_dropout,
-            ffn_d_hidden_multiplier=tc.ffn_d_hidden_multiplier,
-            ffn_dropout=tc.ffn_dropout,
-        )
-
-        fc = cfg.model.fusion
-        self.classifier = nn.Sequential(
-            nn.Linear(tc.d_token, fc.hidden_dim),
-            nn.GELU(),
-            nn.Dropout(fc.dropout),
-            nn.Linear(fc.hidden_dim, 1),
-        )
-
-        # Anomaly head
-        self.anomaly_head = nn.Sequential(
-            nn.Linear(tc.d_token, 128),
-            nn.GELU(),
-            nn.Linear(128, n_features),
-        )
-
-    def forward(self, x):
-        emb = self.transformer(x)
-        logits = self.classifier(emb)
-        recon = self.anomaly_head(emb)
-        return {
-            "logits": logits,
-            "probs": torch.sigmoid(logits.squeeze(-1)),
-            "reconstruction": recon,
-            "fused": emb,
-        }
 
 
 # ─────────────────────────────────────────────

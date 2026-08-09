@@ -8,6 +8,7 @@ Real-time monitoring of fraud detection model:
 - Fraud scenario breakdown
 """
 
+import os
 import time
 import random
 import requests
@@ -27,7 +28,9 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-API_URL = "http://localhost:8000"
+# In Docker, "localhost" inside this container is the dashboard container
+# itself, not the api container — docker-compose.yml sets API_URL=http://api:8000.
+API_URL = os.environ.get("API_URL", "http://localhost:8000")
 
 # ─── Custom CSS ───
 st.markdown("""

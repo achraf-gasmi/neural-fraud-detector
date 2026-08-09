@@ -22,4 +22,8 @@ COPY . .
 ENV PYTHONPATH=/app
 ENV HYDRA_FULL_ERROR=1
 
-ENTRYPOINT ["python", "-m", "training.train"]
+# CMD, not ENTRYPOINT: docker-compose.yml's `command:` (used by the
+# data-pipeline and trainer services) replaces CMD outright. With
+# ENTRYPOINT, compose's command would instead be appended as extra
+# arguments to it, e.g. `python -m training.train python scripts/run_pipeline.py`.
+CMD ["python", "-m", "training.train"]

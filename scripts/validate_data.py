@@ -33,6 +33,11 @@ def validate(df: pd.DataFrame, split_name: str) -> bool:
             errors.append(f"{split_name}: Missing column '{col}'")
             passed = False
 
+    # No amount > 0 check here: by this point `amount` has already been
+    # StandardScaler-transformed (it's in FEATURE_COLUMNS), so ~half of any
+    # real dataset is legitimately <= 0. Raw-dollar positivity is guaranteed
+    # at generation time in data/generator/synthesizer.py instead.
+
     # Check for NaN in features
     nan_count = df[FEATURE_COLUMNS].isna().sum().sum()
     if nan_count > 0:
@@ -52,12 +57,6 @@ def validate(df: pd.DataFrame, split_name: str) -> bool:
         passed = False
     if fraud_rate > 0.3:
         errors.append(f"{split_name}: Suspiciously high fraud rate: {fraud_rate:.2%}")
-        passed = False
-
-    # Check amount column
-    if "amount" in df.columns and (df["amount"] <= 0).any():
-        n_bad = (df["amount"] <= 0).sum()
-        errors.append(f"{split_name}: {n_bad} non-positive amounts")
         passed = False
 
     if errors:

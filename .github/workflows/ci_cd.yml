@@ -39,14 +39,15 @@ jobs:
         run: ruff check . --ignore E501
 
       - name: Run unit tests
-        run: pytest tests/ -v --tb=short
+        run: pytest tests/ -v --tb=short --junitxml=tests/reports/junit.xml
 
       - name: Upload test results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: test-results
           path: tests/reports/
+          if-no-files-found: warn
 
   # ─────────────────────────────────────────────
   # 2. Data Pipeline Validation

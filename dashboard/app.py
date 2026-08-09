@@ -9,16 +9,17 @@ Real-time monitoring of fraud detection model:
 """
 
 import os
-import time
 import random
-import requests
+import time
+from datetime import datetime, timedelta, timezone
+
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
 import plotly.express as px
-from plotly.subplots import make_subplots
+import plotly.graph_objects as go
+import requests
 import streamlit as st
-from datetime import datetime, timedelta
+from plotly.subplots import make_subplots
 
 # ─── Page Config ───
 st.set_page_config(
@@ -79,7 +80,7 @@ with st.sidebar:
         st.success("🟢 API Online")
         st.metric("Requests served", health.get("request_count", 0))
         st.metric("Avg latency", f"{health.get('avg_latency_ms', 0):.1f} ms")
-    except Exception:
+    except Exception:  # noqa: BLE001 -- any failure here just means "show offline", deliberately broad
         st.error("🔴 API Offline")
         st.info("Start the API with:\n```\npython -m api.main\n```")
 
@@ -89,7 +90,7 @@ with st.sidebar:
 # ─────────────────────────────────────────────
 
 st.title("🛡️ FraudShield — Real-Time Monitoring")
-st.caption(f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+st.caption(f"Last updated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC")
 
 tab1, tab2, tab3, tab4 = st.tabs([
     "🔍 Live Scoring", "📈 Model Performance", "📊 Analytics", "⚠️ Alerts"
@@ -126,7 +127,7 @@ with tab1:
     if st.button("🔍 Score Transaction", use_container_width=True, type="primary"):
         payload = {
             "txn_id": f"txn_{random.randint(10000, 99999)}",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "user_id": "user_demo_001",
             "merchant_id": "merch_demo_001",
             "amount": amount,
@@ -197,7 +198,7 @@ with tab1:
 
         except requests.exceptions.ConnectionError:
             st.error("Cannot reach API. Make sure it's running on port 8000.")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- catch-all so a bad response can't crash the UI
             st.error(f"Error: {e}")
 
 
@@ -225,13 +226,13 @@ with tab2:
 
     fig = make_subplots(rows=1, cols=2, subplot_titles=["AUPRC (Primary Metric)", "Loss"])
     fig.add_trace(go.Scatter(x=history["epoch"], y=history["train_auprc"], name="Train AUPRC",
-                             line=dict(color="#6c7ae0")), row=1, col=1)
+                             line={"color": "#6c7ae0"}), row=1, col=1)
     fig.add_trace(go.Scatter(x=history["epoch"], y=history["val_auprc"], name="Val AUPRC",
-                             line=dict(color="#00cc66")), row=1, col=1)
+                             line={"color": "#00cc66"}), row=1, col=1)
     fig.add_trace(go.Scatter(x=history["epoch"], y=history["train_loss"], name="Train Loss",
-                             line=dict(color="#ff8c00")), row=1, col=2)
+                             line={"color": "#ff8c00"}), row=1, col=2)
     fig.add_trace(go.Scatter(x=history["epoch"], y=history["val_loss"], name="Val Loss",
-                             line=dict(color="#ff4444")), row=1, col=2)
+                             line={"color": "#ff4444"}), row=1, col=2)
 
     fig.update_layout(height=400, paper_bgcolor="rgba(0,0,0,0)", font_color="white",
                       plot_bgcolor="rgba(0,0,0,0)")
@@ -243,7 +244,7 @@ with tab2:
     precisions = 0.9 * np.exp(-2 * recalls) + 0.1
     fig_pr = go.Figure()
     fig_pr.add_trace(go.Scatter(x=recalls, y=precisions, fill="tozeroy",
-                                line=dict(color="#6c7ae0"), name=f"AUPRC ≈ 0.77"))
+                                line={"color": "#6c7ae0"}, name="AUPRC ≈ 0.77"))
     fig_pr.add_vline(x=0.8, line_dash="dash", line_color="white", annotation_text="80% Recall")
     fig_pr.update_layout(xaxis_title="Recall", yaxis_title="Precision", height=350,
                          paper_bgcolor="rgba(0,0,0,0)", font_color="white",
@@ -308,7 +309,7 @@ with tab4:
 
     # Simulated alerts
     alerts = pd.DataFrame({
-        "Time": [datetime.now() - timedelta(minutes=i*7) for i in range(10)],
+        "Time": [datetime.now(timezone.utc) - timedelta(minutes=i*7) for i in range(10)],
         "TXN ID": [f"txn_{random.randint(100000, 999999)}" for _ in range(10)],
         "Amount ($)": [round(random.uniform(500, 5000), 2) for _ in range(10)],
         "Risk Score": [round(random.uniform(0.7, 0.99), 3) for _ in range(10)],

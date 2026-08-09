@@ -6,9 +6,10 @@ Tests for: data generator, feature pipeline, model architecture, API endpoints.
 
 import os
 import sys
-import pytest
+
 import numpy as np
 import pandas as pd
+import pytest
 import torch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -165,6 +166,7 @@ class TestTabularFraudDetector:
     @pytest.fixture
     def model_and_features(self, sample_features):
         from omegaconf import OmegaConf
+
         from models.tabular import TabularFraudDetector
 
         cfg = OmegaConf.create({

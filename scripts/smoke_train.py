@@ -7,24 +7,22 @@ Usage: python scripts/smoke_train.py --epochs 2 --n-samples 1000
 """
 
 import argparse
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import numpy as np
-import pandas as pd
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
-from omegaconf import OmegaConf
 from loguru import logger
+from omegaconf import OmegaConf
+from torch.utils.data import DataLoader
 
 from data.generator.synthesizer import generate_dataset
-from data.pipeline.features import run_pipeline, FEATURE_COLUMNS
+from data.pipeline.features import FEATURE_COLUMNS, run_pipeline
 from models.tabular import TabularFraudDetector
-from training.train import TransactionDataset, get_weighted_sampler
 from training.losses import CombinedFraudLoss
-from training.metrics import compute_all_metrics
+from training.train import TransactionDataset
 
 
 def smoke_train(epochs: int = 2, n_samples: int = 1000):
@@ -35,7 +33,7 @@ def smoke_train(epochs: int = 2, n_samples: int = 1000):
         n_users=100, n_merchants=30, n_transactions=n_samples,
         fraud_rate=0.02, output_path="/tmp/smoke_txns.parquet", seed=0
     )
-    train_df, val_df, _ = run_pipeline(
+    train_df, _val_df, _ = run_pipeline(
         raw_path="/tmp/smoke_txns.parquet",
         output_dir="/tmp/smoke_processed",
         artifacts_dir="/tmp/smoke_processed/artifacts",
@@ -52,9 +50,7 @@ def smoke_train(epochs: int = 2, n_samples: int = 1000):
     })
 
     train_ds = TransactionDataset(train_df, FEATURE_COLUMNS)
-    val_ds = TransactionDataset(val_df, FEATURE_COLUMNS)
     train_loader = DataLoader(train_ds, batch_size=64, shuffle=True)
-    val_loader = DataLoader(val_ds, batch_size=64, shuffle=False)
 
     model = TabularFraudDetector(n_features=len(FEATURE_COLUMNS), cfg=cfg)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)

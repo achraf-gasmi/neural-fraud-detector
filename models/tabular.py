@@ -11,8 +11,8 @@ run offline/in batch — see scripts/score_with_graph.py), see models/hybrid.py.
 """
 
 import torch
-import torch.nn as nn
 from omegaconf import DictConfig
+from torch import nn
 
 from models.transformer import FTTransformer
 

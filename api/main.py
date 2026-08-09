@@ -8,23 +8,24 @@ import os
 import pickle
 import time
 from contextlib import asynccontextmanager
-from typing import Optional
 
 import numpy as np
 import pandas as pd
-import shap
 import torch
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from loguru import logger
-from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from pydantic import BaseModel, Field
 
-from data.pipeline.features import FEATURE_COLUMNS, add_temporal_features, add_amount_features
+from data.pipeline.features import (
+    FEATURE_COLUMNS,
+    add_amount_features,
+    add_temporal_features,
+)
 from models.tabular import TabularFraudDetector
-
 
 # ─────────────────────────────────────────────
 # Global State
@@ -58,10 +59,12 @@ async def lifespan(app: FastAPI):
 
     state.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Load scaler and encoders
-    with open(f"{artifacts_dir}/scaler.pkl", "rb") as f:
+    # Blocking I/O here is fine: this is one-time startup work before the
+    # server accepts any requests (the model checkpoint load right below is
+    # a much bigger blocking call anyway), not something in a request path.
+    with open(f"{artifacts_dir}/scaler.pkl", "rb") as f:  # noqa: ASYNC230
         state.scaler = pickle.load(f)
-    with open(f"{artifacts_dir}/encoders.pkl", "rb") as f:
+    with open(f"{artifacts_dir}/encoders.pkl", "rb") as f:  # noqa: ASYNC230
         state.encoders = pickle.load(f)
 
     state.n_features = len(FEATURE_COLUMNS)

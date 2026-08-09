@@ -6,10 +6,10 @@ Tokenizes each feature into a learned embedding, then applies Transformer blocks
 """
 
 import math
+
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional
+from torch import nn
 
 
 class FeatureTokenizer(nn.Module):

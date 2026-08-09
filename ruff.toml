@@ -1,0 +1,6 @@
+[lint]
+# N999 flags the repo's own checkout directory name ("neural-fraud-detector")
+# as an invalid top-level module name -- that's the GitHub Actions checkout
+# path, not something the code controls, so it fires on every __init__.py
+# regardless of what's actually in the file.
+ignore = ["N999"]

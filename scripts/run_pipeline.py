@@ -5,14 +5,17 @@ Run: python scripts/run_pipeline.py
 Executes: data generation → feature engineering → graph construction
 """
 
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from loguru import logger
+
 from data.generator.synthesizer import generate_dataset
 from data.pipeline.features import run_pipeline
 from data.pipeline.graph_builder import build_all_graphs
+
 
 def main():
     logger.info("=" * 60)

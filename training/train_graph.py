@@ -28,9 +28,8 @@ from tqdm import tqdm
 from data.pipeline.graph_builder import load_graph
 from models.hybrid import FraudDetector
 from training.losses import CombinedFraudLoss
-from training.metrics import compute_all_metrics, print_metrics, MetricTracker
+from training.metrics import MetricTracker, compute_all_metrics, print_metrics
 from training.train import set_seed
-
 
 # ─────────────────────────────────────────────
 # Graph Loading

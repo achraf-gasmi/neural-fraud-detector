@@ -7,9 +7,8 @@ Each scenario mimics real-world fraud patterns observed in production systems.
 
 import random
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -381,7 +380,7 @@ def generate_dataset(
     n_merchants: int = 500,
     n_transactions: int = 500_000,
     fraud_rate: float = 0.015,
-    fraud_scenario_weights: Optional[dict] = None,
+    fraud_scenario_weights: dict | None = None,
     output_path: str = "data/raw/transactions.parquet",
     seed: int = 42,
 ) -> pd.DataFrame:
@@ -415,9 +414,12 @@ def generate_dataset(
     users = generate_users(n_users)
     merchants = generate_merchants(n_merchants)
 
-    # Date range: 1 year of data
-    start_date = datetime(2023, 1, 1)
-    end_date = datetime(2024, 1, 1)
+    # Date range: 1 year of data. Naive on purpose -- this is an arbitrary
+    # synthetic calendar range, not a real-world instant, so a tz offset
+    # would add no meaning; every downstream timestamp is derived from these
+    # two by simple arithmetic and must stay naive to compare with them.
+    start_date = datetime(2023, 1, 1)  # noqa: DTZ001
+    end_date = datetime(2024, 1, 1)  # noqa: DTZ001
     total_seconds = int((end_date - start_date).total_seconds())
 
     all_transactions = []

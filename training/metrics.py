@@ -5,18 +5,16 @@ AUPRC is the primary metric for fraud detection (not AUROC).
 Reason: class imbalance makes AUROC optimistic; AUPRC is more diagnostic.
 """
 
+
 import numpy as np
-import torch
+import pandas as pd
 from sklearn.metrics import (
     average_precision_score,
+    confusion_matrix,
+    f1_score,
     precision_recall_curve,
     roc_auc_score,
-    f1_score,
-    classification_report,
-    confusion_matrix,
 )
-from typing import Optional
-import pandas as pd
 
 
 def compute_auprc(y_true: np.ndarray, y_scores: np.ndarray) -> float:
@@ -65,7 +63,7 @@ def find_best_threshold(
 def compute_all_metrics(
     y_true: np.ndarray,
     y_scores: np.ndarray,
-    threshold: Optional[float] = None,
+    threshold: float | None = None,
 ) -> dict:
     """
     Compute comprehensive evaluation metrics.
@@ -82,9 +80,7 @@ def compute_all_metrics(
     auroc = compute_auroc(y_true, y_scores)
 
     if threshold is None:
-        threshold, best_f1 = find_best_threshold(y_true, y_scores, metric="f1")
-    else:
-        best_f1 = None
+        threshold, _ = find_best_threshold(y_true, y_scores, metric="f1")
 
     y_pred = (y_scores >= threshold).astype(int)
     f1 = f1_score(y_true, y_pred, zero_division=0)

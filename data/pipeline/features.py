@@ -5,12 +5,13 @@ Transforms raw transactions into rich feature vectors for the model.
 Includes rolling aggregations, geo-velocity, and entity-level statistics.
 """
 
+import os
+import pickle
+
 import numpy as np
 import pandas as pd
 from loguru import logger
 from sklearn.preprocessing import LabelEncoder, StandardScaler
-import pickle
-import os
 
 
 def haversine_distance(lat1, lon1, lat2, lon2) -> np.ndarray:
@@ -54,7 +55,7 @@ def add_rolling_features(df: pd.DataFrame, windows_hours: list) -> pd.DataFrame:
         logger.info(f"  Rolling {window} ...")
         grp = df_ts.groupby("user_id")
 
-        def extract(col, func=None, apply_fn=None):
+        def extract(col, func=None, apply_fn=None, grp=grp, window=window):
             r = grp[col].rolling(window, closed="left")
             r = getattr(r, func)() if func else r.apply(apply_fn, raw=True)
             return r.reset_index(level=0, drop=True).sort_index().values

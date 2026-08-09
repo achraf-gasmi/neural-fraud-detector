@@ -11,12 +11,12 @@ Anomaly head outputs reconstruction for auxiliary loss during training.
 """
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 from torch_geometric.data import HeteroData
 
-from models.transformer import FTTransformer
 from models.gnn import TemporalGNN
+from models.transformer import FTTransformer
 
 
 class AnomalyHead(nn.Module):

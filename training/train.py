@@ -5,9 +5,6 @@ Full training pipeline with MLflow tracking, early stopping,
 learning rate scheduling, and checkpoint management.
 """
 
-import os
-import sys
-import pickle
 import random
 from pathlib import Path
 
@@ -16,17 +13,16 @@ import mlflow
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn as nn
 from loguru import logger
 from omegaconf import DictConfig, OmegaConf
-from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
+from torch import nn
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from tqdm import tqdm
 
 from data.pipeline.features import FEATURE_COLUMNS
 from models.tabular import TabularFraudDetector
 from training.losses import CombinedFraudLoss
-from training.metrics import compute_all_metrics, print_metrics, MetricTracker
-
+from training.metrics import MetricTracker, compute_all_metrics, print_metrics
 
 # ─────────────────────────────────────────────
 # Seed

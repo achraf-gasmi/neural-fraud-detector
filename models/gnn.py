@@ -7,10 +7,10 @@ Uses Graph Attention Networks (GAT) for adaptive neighbor weighting.
 """
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GATConv, HeteroConv, Linear, to_hetero
+from torch import nn
 from torch_geometric.data import HeteroData
+from torch_geometric.nn import GATConv, HeteroConv
 
 
 class TemporalEncoding(nn.Module):
